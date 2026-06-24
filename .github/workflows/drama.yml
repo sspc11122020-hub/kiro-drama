@@ -2,20 +2,23 @@ name: دراما قصيره
 
 on:
   schedule:
-    - cron: "0 6 * * *"
+     - cron: '*/10 * * * *'
   workflow_dispatch:
 
 jobs:
   extract:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # ضروري جداً للسماح للسكربت بالدفع للمستودع
     
+    # 🔥 هذا هو الجزء الناقص والضروري لكي يتمكن الـ Action من عمل Push وحفظ الملفات
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
@@ -23,35 +26,33 @@ jobs:
           node-version: '20'
 
       - name: Run Extractor
+        # ⚠️ تأكد أن اسم الملف هنا هو نفس اسم ملف الكود الخاص بك (مثلاً index.js أو drama.js)
         run: node drama.js
 
       - name: Commit & Push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. إعدادات المستخدم
+          # إعدادات Git
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # 2. عرض الملفات الموجودة للتأكد من مكانها
-          echo "📂 الملفات التي تم إنشاؤها:"
-          ls -R
+          # نضيف ملفات البيانات فقط
+          git add Dailymotion/ || true
           
-          # 3. إضافة ملفات JSON فقط
-          # نستخدم git add للملفات الناتجة فقط لضمان عدم رفع ملفات النظام
-          git add Dailymotion/Videos/*.json || echo "لم يتم العثور على ملفات في المسار الفرعي"
-          
-          # 4. التأكد من وجود تغييرات
+          # نتأكد إذا في تغييرات
           if git diff --staged --quiet; then
-            echo "ℹ️ لا توجد تغييرات جديدة، لن يتم عمل Commit."
+            echo "ℹ️ لا توجد تغييرات جديدة لتُحفظ"
             exit 0
           fi
           
-          # 5. الحفظ والرفع
-          git commit -m "تحديث الفيديوهات: $(date +'%Y-%m-%d %H:%M')"
+          # نسوي commit
+          git commit -m "تحديث الفيديوهات العربية: $(date +'%Y-%m-%d %H:%M')"
           
-          # محاولة جلب التعديلات البعيدة بذكاء
-          git pull origin main --rebase --autostash
+          # نجيب آخر التغييرات لتفادي التعارض
+          git pull origin main --rebase
           
+          # نرفع التغييرات
           git push origin main
-          echo "✅ تم رفع التغييرات بنجاح!"
+          
+          echo "✅ تم رفع التغييرات بنجاح"

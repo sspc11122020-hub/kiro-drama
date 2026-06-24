@@ -1,37 +1,19 @@
-name: دراما قصيره
-
-on:
-  schedule:
-    - cron: "0 6 * * *"
-  workflow_dispatch:
-
-jobs:
-  extract:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '20'
-
-      - name: Run Extractor
-        run: node drama.js
-
-      - name: Commit & Push
+- name: Commit & Push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # إضافة المجلد الذي يحتوي الملفات فقط
-          git add Dailymotion/Videos/*.json
+          # طباعة الملفات الموجودة للتأكد من مكانها (للتصحيح)
+          echo "--- عرض محتويات المجلدات ---"
+          find . -name "*.json"
+          
+          # إضافة الملفات الموجودة فقط بدون إيقاف السكربت
+          git add Dailymotion/Videos/*.json || echo "لم يتم العثور على ملفات في Dailymotion/Videos"
+          
+          # في حال تم الحفظ في المجلد الرئيسي بدلاً من الفرعي
+          git add *.json || echo "لم يتم العثور على ملفات json في المجلد الرئيسي"
           
           if git diff --staged --quiet; then
             echo "ℹ️ لا توجد تغييرات جديدة"

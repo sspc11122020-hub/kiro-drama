@@ -1,25 +1,57 @@
-- name: Commit & Push
+name: دراما قصيره
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # ضروري جداً للسماح للسكربت بالدفع للمستودع
+    
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Run Extractor
+        run: node drama.js
+
+      - name: Commit & Push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 1. إعدادات المستخدم
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # طباعة الملفات الموجودة للتأكد من مكانها (للتصحيح)
-          echo "--- عرض محتويات المجلدات ---"
-          find . -name "*.json"
+          # 2. عرض الملفات الموجودة للتأكد من مكانها
+          echo "📂 الملفات التي تم إنشاؤها:"
+          ls -R
           
-          # إضافة الملفات الموجودة فقط بدون إيقاف السكربت
-          git add Dailymotion/Videos/*.json || echo "لم يتم العثور على ملفات في Dailymotion/Videos"
+          # 3. إضافة ملفات JSON فقط
+          # نستخدم git add للملفات الناتجة فقط لضمان عدم رفع ملفات النظام
+          git add Dailymotion/Videos/*.json || echo "لم يتم العثور على ملفات في المسار الفرعي"
           
-          # في حال تم الحفظ في المجلد الرئيسي بدلاً من الفرعي
-          git add *.json || echo "لم يتم العثور على ملفات json في المجلد الرئيسي"
-          
+          # 4. التأكد من وجود تغييرات
           if git diff --staged --quiet; then
-            echo "ℹ️ لا توجد تغييرات جديدة"
+            echo "ℹ️ لا توجد تغييرات جديدة، لن يتم عمل Commit."
             exit 0
           fi
           
+          # 5. الحفظ والرفع
           git commit -m "تحديث الفيديوهات: $(date +'%Y-%m-%d %H:%M')"
-          git pull origin main --rebase
+          
+          # محاولة جلب التعديلات البعيدة بذكاء
+          git pull origin main --rebase --autostash
+          
           git push origin main
+          echo "✅ تم رفع التغييرات بنجاح!"

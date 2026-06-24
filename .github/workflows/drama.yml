@@ -1,0 +1,59 @@
+name: دراما قصيره
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      # تم إزالة خطوة تثبيت axios و cheerio لأن السكربت الخاص بك لا يستخدمها
+      # ويعتمد بالكامل على fetch المدمجة في Node.js مما يجعل الـ Action أسرع بكثير.
+
+      - name: Run Extractor
+        run: node drama.js
+
+      - name: Commit & Push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # إعدادات Git
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          
+          # نضيف ملفات البيانات فقط (نتجاهل node_modules إن وجدت)
+          git add data/ Dailymotion/ *.json || true
+          
+          # نرجع ملفات node_modules لو كانت مضافة بالخطأ
+          git reset -- node_modules/ || true
+          
+          # نتأكد إذا في تغييرات
+          if git diff --staged --quiet; then
+            echo "ℹ️ لا توجد تغييرات جديدة لتُحفظ"
+            exit 0
+          fi
+          
+          # نسوي commit
+          git commit -m "تحديث الفيديوهات العربية: $(date +'%Y-%m-%d %H:%M')"
+          
+          # نجيب آخر التغييرات
+          git pull origin main --rebase || echo "⚠️ فشل pull"
+          
+          # نرفع
+          git push origin main
+          
+          echo "✅ تم رفع التغييرات بنجاح"

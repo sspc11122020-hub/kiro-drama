@@ -17,8 +17,8 @@ await createDirectories();
 
 // ==================== إعدادات النظام ====================
 const CONFIG = {
-    homeItemsCount: 30,    // أحدث 30 فيديو للرئيسية
-    videosPerFile: 35,     // 35 فيديو لكل ملف p
+    homeItemsCount: 100,    // أحدث 30 فيديو للرئيسية
+    videosPerFile: 100,     // 35 فيديو لكل ملف p
     requestDelay: 700,     // تأخير بسيط لتجنب الحظر
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 };

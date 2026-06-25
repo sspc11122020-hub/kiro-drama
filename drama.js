@@ -1,248 +1,137 @@
-const fs = require('fs');
-const path = require('path');
-const https = require('https');
-const { parse } = require('node-html-parser');
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
-class LaroozaPagedExtractor {
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// ==================== إعدادات المسارات ====================
+const DAILYMOTION_DIR = path.join(__dirname, "Dailymotion");
+const VIDEOS_DIR = path.join(DAILYMOTION_DIR, "Videos");
+
+const createDirectories = async () => {
+    if (!fs.existsSync(VIDEOS_DIR)) await fs.promises.mkdir(VIDEOS_DIR, { recursive: true });
+};
+
+await createDirectories();
+
+// ==================== إعدادات النظام ====================
+const CONFIG = {
+    homeItemsCount: 30,    // أحدث 30 فيديو للرئيسية
+    videosPerFile: 35,     // 35 فيديو لكل ملف p
+    requestDelay: 700,     // تأخير بسيط لتجنب الحظر
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+};
+
+const CHANNELS = [
+    "Film.Arena",
+    "Chnese-drama",
+    "Drama-Portal",
+    "Neon.History",
+    "drama.box"
+];
+
+function generateRandomStats(originalValue) {
+    return originalValue < 1000 ? Math.floor(Math.random() * 49000) + 1000 : originalValue;
+}
+
+// ==================== نظام طلبات Dailymotion API ====================
+class DailymotionClient {
     constructor() {
-        this.episodesPerFile = 500;
-        this.outputDir = 'Ramadan';
-        this.allEpisodes = [];
-        this.episodesMap = new Map();
-        
-        this.baseUrls = [
-            'https://larozza.mom',
-            'https://larozza.makeup',
-            'https://m.laroza-tv.net'
-        ];
-        this.baseUrl = this.baseUrls[0];
-        
-        if (!fs.existsSync(this.outputDir)) {
-            fs.mkdirSync(this.outputDir, { recursive: true });
-        }
-        
-        this.loadExistingEpisodes();
-        
-        this.userAgents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/119.0.0.0 Safari/537.36'
-        ];
-        
-        this.proxies = [
-            '',
-            'https://corsproxy.io/?',
-            'https://api.codetabs.com/v1/proxy?quest='
-        ];
-        
-        this.maxPages = 100;
-        this.minEpisodesPerPage = 1;
+        this.baseUrl = "https://api.dailymotion.com";
     }
 
-    // --- وظيفة جديدة لفحص اللغة العربية ---
-    hasArabic(text) {
-        // هذا النمط يبحث عن أي حرف في نطاق الحروف العربية
-        const arabicPattern = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/;
-        return arabicPattern.test(text);
-    }
-
-    loadExistingEpisodes() {
+    async getM3U8Url(videoId) {
         try {
-            const files = fs.readdirSync(this.outputDir)
-                .filter(f => f.match(/^page\d+\.json$/));
-            
-            files.sort((a, b) => {
-                const numA = parseInt(a.match(/\d+/)[0]);
-                const numB = parseInt(b.match(/\d+/)[0]);
-                return numA - numB;
+            const response = await fetch(`https://www.dailymotion.com/player/metadata/video/${videoId}`, {
+                headers: { 'User-Agent': CONFIG.userAgent }
+            });
+            const data = await response.json();
+            return data.qualities?.auto?.[0]?.url || "";
+        } catch { return ""; }
+    }
+
+    async getUserVideos(username) {
+        console.log(`📡 جلب بيانات القناة: ${username}...`);
+        // جلب 100 فيديو من كل قناة (يمكنك زيادة الليميت إذا أردت المزيد)
+        const url = `${this.baseUrl}/user/${username}/videos?fields=id,title,thumbnail_url,duration,created_time,views_total&limit=100&sort=recent`;
+        const response = await fetch(url, { headers: { 'User-Agent': CONFIG.userAgent } });
+        return await response.json();
+    }
+}
+
+// ==================== المعالج الرئيسي ====================
+class ChronologicalScraper {
+    constructor() {
+        this.client = new DailymotionClient();
+        this.masterList = []; // القائمة الكبيرة لكل القنوات
+        this.arabicRegex = /[\u0600-\u06FF]/;
+    }
+
+    async run() {
+        console.log("🚀 جاري جمع الفيديوهات العربية من كافة القنوات...");
+
+        for (const channel of CHANNELS) {
+            const data = await this.client.getUserVideos(channel);
+            if (!data.list) continue;
+
+            for (const video of data.list) {
+                if (this.arabicRegex.test(video.title)) {
+                    this.masterList.push(video);
+                }
+            }
+        }
+
+        // --- الخطوة السحرية: الترتيب الزمني من الأحدث للأقدم ---
+        console.log("⚖️ جاري ترتيب الفيديوهات حسب تاريخ النشر...");
+        this.masterList.sort((a, b) => b.created_time - a.created_time);
+
+        console.log(`✅ إجمالي الفيديوهات المكتشفة: ${this.masterList.length}. جاري استخراج روابط m3u8...`);
+
+        const finalizedVideos = [];
+        // سنبدأ الآن باستخراج الروابط بالترتيب الجديد
+        for (const video of this.masterList) {
+            console.log(`🔗 معالجة: ${video.title.substring(0, 40)}...`);
+            const m3u8Link = await this.client.getM3U8Url(video.id);
+
+            finalizedVideos.push({
+                id: video.id,
+                title: video.title,
+                thumbnail: video.thumbnail_url,
+                m3u8Url: m3u8Link,
+                embedUrl: `https://www.dailymotion.com/embed/video/${video.id}`,
+                duration: video.duration,
+                views: generateRandomStats(video.views_total),
+                uploadedAt: new Date(video.created_time * 1000).toISOString(),
+                timestamp: video.created_time // للتحقق فقط
             });
 
-            for (const file of files) {
-                const filePath = path.join(this.outputDir, file);
-                const content = fs.readFileSync(filePath, 'utf8');
-                
-                let episodes = [];
-                try {
-                    const parsed = JSON.parse(content);
-                    episodes = parsed.episodes || (Array.isArray(parsed) ? parsed : []);
-                } catch (e) {
-                    console.log(`⚠️ خطأ في قراءة ${file}`);
-                    continue;
-                }
-                
-                for (const episode of episodes) {
-                    if (episode && episode.id) {
-                        this.episodesMap.set(episode.id, episode);
-                    }
-                }
-                this.allEpisodes.push(...episodes);
-            }
-            console.log(`📚 تم تحميل ${this.allEpisodes.length} حلقة من ${files.length} ملف`);
-        } catch (error) {
-            console.log('ℹ️ لا توجد ملفات سابقة، بدء من الصفر');
+            await new Promise(r => setTimeout(r, CONFIG.requestDelay));
         }
+
+        await this.distributeFiles(finalizedVideos);
     }
 
-    async start() {
-        console.log('🚀 بدء استخراج جميع صفحات رمضان 2026 (فلترة العناوين العربية مفعلة)');
-        let page = 1;
-        let consecutiveEmptyPages = 0;
-        let maxConsecutiveEmpty = 3;
-        let newEpisodesCount = 0;
-        let totalEpisodesExtracted = 0;
-        let filteredCount = 0; // عداد للعناوين التي تم حذفها
+    async distributeFiles(videos) {
+        // 1. ملف Home.json (أحدث 30)
+        const homeChunk = videos.slice(0, CONFIG.homeItemsCount);
+        await fs.promises.writeFile(path.join(VIDEOS_DIR, "Home.json"), JSON.stringify(homeChunk, null, 2));
+        console.log(`🏠 تم إنشاء Home.json بأحدث 30 فيديو.`);
 
-        while (page <= this.maxPages && consecutiveEmptyPages < maxConsecutiveEmpty) {
-            const pageUrl = `${this.baseUrl}/category.php?cat=ramadan-2026&page=${page}&order=DESC`;
-            let html = null;
-            let success = false;
-
-            for (let attempt = 0; attempt < 3; attempt++) {
-                try {
-                    html = await this.fetchWithProxy(pageUrl);
-                    if (html && html.length > 200) {
-                        success = true;
-                        break;
-                    }
-                } catch (e) {
-                    await this.sleep(2000);
-                }
-            }
+        // 2. ملفات p1, p2... (البقية مقسمة كل 35)
+        const remaining = videos.slice(CONFIG.homeItemsCount);
+        for (let i = 0; i < remaining.length; i += CONFIG.videosPerFile) {
+            const chunk = remaining.slice(i, i + CONFIG.videosPerFile);
+            const fileNumber = Math.floor(i / CONFIG.videosPerFile) + 1;
+            const fileName = `p${fileNumber}.json`;
             
-            if (!success) {
-                consecutiveEmptyPages++;
-                page++;
-                continue;
-            }
-
-            const pageEpisodes = await this.extractEpisodesFromPage(html, page);
-            
-            if (pageEpisodes.length === 0) {
-                consecutiveEmptyPages++;
-            } else {
-                consecutiveEmptyPages = 0;
-                for (const episode of pageEpisodes) {
-                    if (!this.episodesMap.has(episode.id)) {
-                        newEpisodesCount++;
-                        this.episodesMap.set(episode.id, episode);
-                        console.log(`🆕 تم الحفظ: ${episode.title.substring(0, 40)}`);
-                    }
-                }
-            }
-            
-            if (page % 5 === 0) {
-                this.allEpisodes = Array.from(this.episodesMap.values());
-                await this.savePaginatedFiles(true);
-            }
-            page++;
-            await this.sleep(3000);
-        }
-        
-        this.allEpisodes = Array.from(this.episodesMap.values());
-        await this.savePaginatedFiles(false);
-        await this.createSummary();
-        return { total: this.allEpisodes.length, new: newEpisodesCount, pages: page - 1 };
-    }
-
-    async extractEpisodesFromPage(html, pageNumber) {
-        try {
-            const root = parse(html);
-            const episodes = [];
-            const items = root.querySelectorAll('li.col-xs-6, li.col-sm-4, div.video-item, article');
-            
-            for (const item of items) {
-                const episode = await this.extractBasicInfo(item, pageNumber);
-                // الفلترة هنا: إذا كان الكائن موجوداً ومر من فحص اللغة العربية
-                if (episode) {
-                    episodes.push(episode);
-                }
-            }
-            return episodes;
-        } catch (error) {
-            return [];
-        }
-    }
-
-    async extractBasicInfo(element, pageNumber) {
-        let linkElement = element.querySelector('a');
-        if (!linkElement) return null;
-        
-        const href = linkElement.getAttribute('href');
-        if (!href) return null;
-        
-        // 1. استخراج العنوان أولاً للفحص
-        let title = '';
-        const titleSelectors = ['.ellipsis', 'h3', 'h4', '.title', 'img[alt]', 'a[title]'];
-        for (const selector of titleSelectors) {
-            const titleEl = element.querySelector(selector);
-            if (titleEl) {
-                title = titleEl.textContent || titleEl.getAttribute('alt') || titleEl.getAttribute('title') || '';
-                if (title) break;
-            }
-        }
-        title = this.cleanText(title);
-
-        // --- التعديل الجوهري: فحص العنوان ---
-        if (!title || !this.hasArabic(title)) {
-            // إذا كان العنوان فارغاً أو لا يحتوي على حروف عربية، نتجاهله
-            return null; 
+            await fs.promises.writeFile(path.join(VIDEOS_DIR, fileName), JSON.stringify(chunk, null, 2));
+            console.log(`📄 تم إنشاء ${fileName} بـ ${chunk.length} فيديو (ترتيب أقدم).`);
         }
 
-        // 2. استخراج ID
-        let id = null;
-        const match = href.match(/vid=([a-zA-Z0-9_-]+)/) || href.match(/\/([a-zA-Z0-9_-]{8,})\.html/);
-        id = match ? match[1] : null;
-        if (!id) return null;
-
-        return {
-            id: id,
-            title: title,
-            image: element.querySelector('img')?.getAttribute('src') || '',
-            videoUrl: `${this.baseUrl}/embed.php?vid=${id}`,
-            page: pageNumber,
-            extractedAt: new Date().toISOString()
-        };
+        console.log("\n✨ تمت المهمة بنجاح وفيديوهاتك الآن مرتبة زمنياً!");
     }
-
-    // تنظيف النص مع الحفاظ على الحروف العربية
-    cleanText(text) {
-        if (!text) return '';
-        return text
-            .replace(/[\n\r\t]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-    }
-
-    // بقية الدوال (savePaginatedFiles, createSummary, fetchWithProxy, sleep) تبقى كما هي في كودك الأصلي...
-    // [ملاحظة: تأكد من بقاء الدوال الأخرى ليعمل الكود بالكامل]
-    
-    async fetchWithProxy(url) {
-        return new Promise((resolve, reject) => {
-            const proxy = this.proxies[Math.floor(Math.random() * this.proxies.length)];
-            const finalUrl = proxy ? proxy + encodeURIComponent(url) : url;
-            const options = {
-                headers: { 'User-Agent': this.userAgents[0] },
-                timeout: 10000,
-                rejectUnauthorized: false
-            };
-            https.get(finalUrl, options, (res) => {
-                let data = '';
-                res.on('data', (chunk) => data += chunk);
-                res.on('end', () => resolve(data));
-            }).on('error', reject);
-        });
-    }
-
-    async savePaginatedFiles(isTemporary = false) {
-        const filePath = path.join(this.outputDir, isTemporary ? 'temp.json' : 'page1.json');
-        const data = { episodes: this.allEpisodes };
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-    }
-
-    async createSummary() { /* نفس الكود الأصلي */ }
-    sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 }
 
-if (require.main === module) {
-    new LaroozaPagedExtractor().start().then(r => console.log("Done", r));
-}
+const scraper = new ChronologicalScraper();
+scraper.run();

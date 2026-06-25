@@ -2,12 +2,16 @@ name: دراما قصيره
 
 on:
   schedule:
-    - cron: "0 6 * * *"
+     - cron: '*/60 * * * *'
   workflow_dispatch:
 
 jobs:
   extract:
     runs-on: ubuntu-latest
+    
+    # 🔥 هذا هو الجزء الناقص والضروري لكي يتمكن الـ Action من عمل Push وحفظ الملفات
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repo
@@ -21,10 +25,8 @@ jobs:
         with:
           node-version: '20'
 
-      # تم إزالة خطوة تثبيت axios و cheerio لأن السكربت الخاص بك لا يستخدمها
-      # ويعتمد بالكامل على fetch المدمجة في Node.js مما يجعل الـ Action أسرع بكثير.
-
       - name: Run Extractor
+        # ⚠️ تأكد أن اسم الملف هنا هو نفس اسم ملف الكود الخاص بك (مثلاً index.js أو drama.js)
         run: node drama.js
 
       - name: Commit & Push
@@ -35,11 +37,8 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # نضيف ملفات البيانات فقط (نتجاهل node_modules إن وجدت)
-          git add data/ Dailymotion/ *.json || true
-          
-          # نرجع ملفات node_modules لو كانت مضافة بالخطأ
-          git reset -- node_modules/ || true
+          # نضيف ملفات البيانات فقط
+          git add Dailymotion/ || true
           
           # نتأكد إذا في تغييرات
           if git diff --staged --quiet; then
@@ -50,10 +49,10 @@ jobs:
           # نسوي commit
           git commit -m "تحديث الفيديوهات العربية: $(date +'%Y-%m-%d %H:%M')"
           
-          # نجيب آخر التغييرات
-          git pull origin main --rebase || echo "⚠️ فشل pull"
+          # نجيب آخر التغييرات لتفادي التعارض
+          git pull origin main --rebase
           
-          # نرفع
+          # نرفع التغييرات
           git push origin main
           
           echo "✅ تم رفع التغييرات بنجاح"
